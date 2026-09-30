@@ -1,0 +1,54 @@
+// Copyright Zankyo Studio. All Rights Reserved.
+
+int {ParameterName}_VoxelCount;
+float3 {ParameterName}_ModelSize;
+Buffer<float4> {ParameterName}_PositionAndColorIndexBuffer;
+Buffer<float4> {ParameterName}_ColorBuffer;
+
+int GetClampedVoxelIndex_{ParameterName}(int VoxelIndex)
+{
+	return clamp(VoxelIndex, 0, max({ParameterName}_VoxelCount - 1, 0));
+}
+
+void GetVoxelCount_{ParameterName}(out int VoxelCount)
+{
+	VoxelCount = {ParameterName}_VoxelCount;
+}
+
+void GetModelSize_{ParameterName}(out float3 ModelSize)
+{
+	ModelSize = {ParameterName}_ModelSize;
+}
+
+void IsValidVoxelIndex_{ParameterName}(int VoxelIndex, out bool bIsValid)
+{
+	bIsValid = VoxelIndex >= 0 && VoxelIndex < {ParameterName}_VoxelCount;
+}
+
+void GetVoxelPosition_{ParameterName}(int VoxelIndex, out float3 Position)
+{
+	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
+	Position = {ParameterName}_PositionAndColorIndexBuffer[ClampedIndex].xyz;
+}
+
+void GetVoxelColor_{ParameterName}(int VoxelIndex, out float4 Color)
+{
+	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
+	Color = {ParameterName}_ColorBuffer[ClampedIndex];
+}
+
+void GetVoxelColorIndex_{ParameterName}(int VoxelIndex, out int ColorIndex)
+{
+	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
+	ColorIndex = (int)round({ParameterName}_PositionAndColorIndexBuffer[ClampedIndex].w);
+}
+
+void GetVoxel_{ParameterName}(int VoxelIndex, out bool bIsValid, out float3 Position, out float4 Color, out int ColorIndex)
+{
+	bIsValid = VoxelIndex >= 0 && VoxelIndex < {ParameterName}_VoxelCount;
+	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
+	const float4 PositionAndColorIndex = {ParameterName}_PositionAndColorIndexBuffer[ClampedIndex];
+	Position = PositionAndColorIndex.xyz;
+	Color = {ParameterName}_ColorBuffer[ClampedIndex];
+	ColorIndex = (int)round(PositionAndColorIndex.w);
+}

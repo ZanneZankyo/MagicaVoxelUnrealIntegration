@@ -1,22 +1,33 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0",
+	"VersionName": "0.1",
 	"FriendlyName": "MagicaVoxelUnrealIntegration",
 	"Description": "Plugin to import .vox files",
-	"Category": "Other",
+	"Category": "Voxel",
 	"CreatedBy": "ZankyoStudio",
 	"CreatedByURL": "",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
-	"CanContainContent": false,
+	"CanContainContent": true,
 	"IsBetaVersion": true,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "Niagara",
+			"Enabled": true
+		}
+	],
 	"Modules": [
 		{
 			"Name": "MagicaVoxelUnrealIntegration",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "MagicaVoxelUnrealIntegrationEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}

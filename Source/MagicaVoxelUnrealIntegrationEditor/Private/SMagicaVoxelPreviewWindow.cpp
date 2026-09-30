@@ -9,7 +9,7 @@
 #include "Engine/StaticMesh.h"
 #include "IContentBrowserSingleton.h"
 #include "MagicaVoxelData.h"
-#include "MagicaVoxelStaticMeshUtility.h"
+#include "MagicaVoxelUtility.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/PackageName.h"
@@ -349,7 +349,7 @@ FReply SMagicaVoxelPreviewWindow::SavePreviewMesh()
 	}
 
 	UStaticMesh* SavedMesh = NewObject<UStaticMesh>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
-	if (!SavedMesh || !UMagicaVoxelStaticMeshUtility::PopulateStaticMeshFromModel(SavedMesh, *Model))
+	if (!SavedMesh || !UMagicaVoxelUtility::PopulateStaticMeshFromModel(SavedMesh, *Model))
 	{
 		StatusText = LOCTEXT("SaveMeshFailed", "Failed to build the static mesh asset.");
 		return FReply::Handled();
@@ -389,7 +389,7 @@ void SMagicaVoxelPreviewWindow::RefreshPreviewMesh()
 	}
 
 	UStaticMesh* NewPreviewMesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
-	if (!UMagicaVoxelStaticMeshUtility::PopulateStaticMeshFromModel(NewPreviewMesh, *Model))
+	if (!UMagicaVoxelUtility::PopulateStaticMeshFromModel(NewPreviewMesh, *Model))
 	{
 		StatusText = LOCTEXT("PreviewBuildFailed", "Failed to build the preview static mesh.");
 		if (Viewport.IsValid())

@@ -1,10 +1,12 @@
 // Copyright Zankyo Studio. All Rights Reserved.
 
-#include "MagicaVoxelStaticMeshUtility.h"
+#include "MagicaVoxelUtility.h"
 
 #include "Engine/StaticMesh.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
+#include "NiagaraComponent.h"
+#include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 
 DECLARE_LOG_CATEGORY_CLASS(LogMagicaVoxelStaticMeshUtility, Log, All);
 
@@ -459,12 +461,106 @@ namespace
 	}
 }
 
-bool UMagicaVoxelStaticMeshUtility::PopulateStaticMeshFromModel(UStaticMesh* StaticMesh, const FMagicaVoxelModel& Model, const bool bUseGreedyMeshing)
+bool UMagicaVoxelUtility::PopulateStaticMeshFromModel(UStaticMesh* StaticMesh, const FMagicaVoxelModel& Model, const bool bUseGreedyMeshing)
 {
 	return PopulateStaticMeshFromVoxelArray(StaticMesh, Model.Voxels, Model.Size, bUseGreedyMeshing);
 }
 
-bool UMagicaVoxelStaticMeshUtility::PopulateStaticMeshFromVoxels(UStaticMesh* StaticMesh, const TArray<FMagicaVoxelVoxel>& Voxels, const bool bUseGreedyMeshing)
+bool UMagicaVoxelUtility::PopulateStaticMeshFromVoxels(UStaticMesh* StaticMesh, const TArray<FMagicaVoxelVoxel>& Voxels, const bool bUseGreedyMeshing)
 {
 	return PopulateStaticMeshFromVoxelArray(StaticMesh, Voxels, InferVoxelBounds(Voxels), bUseGreedyMeshing);
+}
+
+bool UMagicaVoxelUtility::InitializeVoxelModel(UNiagaraComponent* NiagaraComponent, const UMagicaVoxelData* Data,
+	int32 ModelIndex, float VoxelSize)
+{
+	if (!IsValid(NiagaraComponent) ||
+        !IsValid(Data) ||
+        !Data->Models.IsValidIndex(ModelIndex) ||
+        VoxelSize <= 0.0f)
+    {
+        return false;
+    }
+
+    const FMagicaVoxelModel& Model = Data->Models[ModelIndex];
+
+    if (Model.Size.X <= 0 ||
+        Model.Size.Y <= 0 ||
+        Model.Size.Z <= 0)
+    {
+        return false;
+    }
+
+    TArray<FVector> Offsets;
+    TArray<FLinearColor> Colors;
+
+    Offsets.Reserve(Model.Voxels.Num());
+    Colors.Reserve(Model.Voxels.Num());
+
+    const FVector ModelSize(
+        static_cast<double>(Model.Size.X),
+        static_cast<double>(Model.Size.Y),
+        static_cast<double>(Model.Size.Z));
+
+    for (const FMagicaVoxelVoxel& Voxel : Model.Voxels)
+    {
+        // Skip invalid entries while preserving matching array lengths.
+        if (Voxel.X >= Model.Size.X ||
+            Voxel.Y >= Model.Size.Y ||
+            Voxel.Z >= Model.Size.Z)
+        {
+            continue;
+        }
+
+        /*const FVector CellCenter(
+            static_cast<double>(Voxel.X) + 0.5,
+            static_cast<double>(Voxel.Y) + 0.5,
+            static_cast<double>(Voxel.Z) + 0.5);
+
+        // Center the model's declared bounding box on the component.
+        Offsets.Add((CellCenter - ModelSize * 0.5) * VoxelSize);*/
+    	
+    	const FVector CellPosition(
+			static_cast<double>(Voxel.X),
+			static_cast<double>(Voxel.Y),
+			static_cast<double>(Voxel.Z));
+    	
+    	Offsets.Add(CellPosition * VoxelSize);
+
+        // Adapt this lookup to your importer's palette representation.
+        const int32 PaletteIndex = static_cast<int32>(Voxel.ColorIndex);
+
+        FLinearColor Color = FLinearColor::White;
+        if (Data->Palette.IsValidIndex(PaletteIndex))
+        {
+            Color = FLinearColor::FromSRGBColor(
+                Data->Palette[PaletteIndex]);
+        }
+
+        Color.A = 1.0f;
+        Colors.Add(Color);
+    }
+
+    NiagaraComponent->DeactivateImmediate();
+
+    UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+        NiagaraComponent,
+        FName(TEXT("User.VoxelOffsets")),
+        Offsets);
+
+    UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayColor(
+        NiagaraComponent,
+        FName(TEXT("User.VoxelColors")),
+        Colors);
+
+    NiagaraComponent->SetVariableInt(
+        FName(TEXT("User.VoxelCount")),
+        Offsets.Num());
+
+    if (!Offsets.IsEmpty())
+    {
+        // Reset simulation so the initial burst uses the new parameters.
+        NiagaraComponent->Activate(true);
+    }
+	return true;
 }
