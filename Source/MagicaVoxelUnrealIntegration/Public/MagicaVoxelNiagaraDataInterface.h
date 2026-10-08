@@ -3,17 +3,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MagicaVoxelData.h"
+#include "MagicaVoxelNiagaraData.h"
 #include "NiagaraDataInterface.h"
 #include "MagicaVoxelNiagaraDataInterface.generated.h"
 
 /**
- * Niagara data interface for reading imported MagicaVoxel model data in CPU and GPU simulations.
+	 * Niagara data interface for reading imported MagicaVoxel model data in CPU and GPU simulations.
  *
  * Typical Niagara usage:
  * - Use GetVoxelCount in an emitter spawn module to drive burst count.
  * - Use ExecutionIndex with GetVoxelPosition/GetVoxelColor during particle spawn.
- * - Render particles with a cube mesh renderer scaled to VoxelSize.
+ * - Render particles with a cube mesh renderer scaled to the source asset's packed voxel positions.
  */
 UCLASS(EditInlineNew, Category = "MagicaVoxel", CollapseCategories, meta = (DisplayName = "MagicaVoxel Data"))
 class MAGICAVOXELUNREALINTEGRATION_API UMagicaVoxelNiagaraDataInterface : public UNiagaraDataInterface
@@ -43,19 +43,7 @@ public:
 	virtual void SetShaderParameters(const FNiagaraDataInterfaceSetShaderParametersContext& Context) const override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MagicaVoxel")
-	TObjectPtr<UMagicaVoxelData> VoxelData = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MagicaVoxel", meta = (ClampMin = "0"))
-	int32 ModelIndex = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MagicaVoxel", meta = (ClampMin = "0.0001"))
-	float VoxelSize = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MagicaVoxel")
-	bool bUseCellCenters = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MagicaVoxel")
-	bool bCenterModel = true;
+	TObjectPtr<UMagicaVoxelNiagaraData> NiagaraData = nullptr;
 
 	void VMGetVoxelCount(FVectorVMExternalFunctionContext& Context);
 	void VMGetModelSize(FVectorVMExternalFunctionContext& Context);
@@ -64,11 +52,4 @@ public:
 	void VMGetVoxelColor(FVectorVMExternalFunctionContext& Context);
 	void VMGetVoxelColorIndex(FVectorVMExternalFunctionContext& Context);
 	void VMGetVoxel(FVectorVMExternalFunctionContext& Context);
-
-private:
-	void BuildPackedVoxelData(TArray<FVector4f>& OutPositionsAndColorIndices, TArray<FVector4f>& OutColors, FIntVector& OutModelSize) const;
-	const FMagicaVoxelModel* GetModel() const;
-	bool GetVoxel(int32 VoxelIndex, const FMagicaVoxelVoxel*& OutVoxel, const FMagicaVoxelModel*& OutModel) const;
-	FVector3f MakeVoxelPosition(const FMagicaVoxelVoxel& Voxel, const FMagicaVoxelModel& Model) const;
-	FLinearColor GetVoxelColor(const FMagicaVoxelVoxel& Voxel) const;
 };

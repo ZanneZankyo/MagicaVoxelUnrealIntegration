@@ -9,6 +9,7 @@
 #include "Engine/StaticMesh.h"
 #include "IContentBrowserSingleton.h"
 #include "MagicaVoxelData.h"
+#include "MagicaVoxelNiagaraData.h"
 #include "MagicaVoxelUtility.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -65,6 +66,12 @@ namespace
 	{
 		const FString BaseName = VoxelData ? VoxelData->GetName() : TEXT("MagicaVoxelMesh");
 		return FString::Printf(TEXT("%s_Model_%d_StaticMesh"), *BaseName, ModelIndex);
+	}
+
+	FString MakeDefaultNiagaraDataAssetName(const UMagicaVoxelData* VoxelData, const int32 ModelIndex)
+	{
+		const FString BaseName = VoxelData ? VoxelData->GetName() : TEXT("MagicaVoxelNiagaraData");
+		return FString::Printf(TEXT("%s_Model_%d_NiagaraData"), *BaseName, ModelIndex);
 	}
 
 	const FMagicaVoxelModel* GetSelectedModel(const UMagicaVoxelData* VoxelData, const int32 ModelIndex)
@@ -188,6 +195,16 @@ void SMagicaVoxelPreviewWindow::Construct(const FArguments& InArgs)
 				.Text(LOCTEXT("SaveStaticMeshButton", "Save Static Mesh"))
 				.IsEnabled(this, &SMagicaVoxelPreviewWindow::CanSavePreviewMesh)
 				.OnClicked(this, &SMagicaVoxelPreviewWindow::SavePreviewMesh)
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(8.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("SaveNiagaraDataButton", "Save Niagara Data"))
+				.IsEnabled(this, &SMagicaVoxelPreviewWindow::CanSavePackedVoxelData)
+				.OnClicked(this, &SMagicaVoxelPreviewWindow::SavePackedVoxelData)
 			]
 		]
 
@@ -365,6 +382,57 @@ FReply SMagicaVoxelPreviewWindow::SavePreviewMesh()
 bool SMagicaVoxelPreviewWindow::CanSavePreviewMesh() const
 {
 	return PreviewMesh.IsValid() && GetSelectedModel(SelectedVoxelData.Get(), GetSelectedModelIndex()) != nullptr;
+}
+
+FReply SMagicaVoxelPreviewWindow::SavePackedVoxelData()
+{
+	const UMagicaVoxelData* VoxelData = SelectedVoxelData.Get();
+	const int32 ModelIndex = GetSelectedModelIndex();
+	if (!GetSelectedModel(VoxelData, ModelIndex))
+	{
+		return FReply::Handled();
+	}
+
+	FSaveAssetDialogConfig SaveAssetDialogConfig;
+	SaveAssetDialogConfig.DialogTitleOverride = LOCTEXT("SaveNiagaraDataDialogTitle", "Save MagicaVoxel Niagara Data");
+	SaveAssetDialogConfig.DefaultPath = TEXT("/Game");
+	SaveAssetDialogConfig.DefaultAssetName = MakeDefaultNiagaraDataAssetName(VoxelData, ModelIndex);
+	SaveAssetDialogConfig.AssetClassNames.Add(UMagicaVoxelNiagaraData::StaticClass()->GetClassPathName());
+	SaveAssetDialogConfig.ExistingAssetPolicy = ESaveAssetDialogExistingAssetPolicy::Disallow;
+
+	FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+	const FString SaveObjectPath = ContentBrowserModule.Get().CreateModalSaveAssetDialog(SaveAssetDialogConfig);
+	if (SaveObjectPath.IsEmpty())
+	{
+		return FReply::Handled();
+	}
+
+	const FString PackageName = FPackageName::ObjectPathToPackageName(SaveObjectPath);
+	const FString AssetName = FPackageName::ObjectPathToObjectName(SaveObjectPath);
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		StatusText = LOCTEXT("NiagaraDataPackageCreateFailed", "Failed to create the target package.");
+		return FReply::Handled();
+	}
+
+	UMagicaVoxelNiagaraData* NiagaraData = NewObject<UMagicaVoxelNiagaraData>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+	if (!NiagaraData || !NiagaraData->BuildFromVoxelData(VoxelData, ModelIndex))
+	{
+		StatusText = LOCTEXT("SaveNiagaraDataFailed", "Failed to build the Niagara data asset.");
+		return FReply::Handled();
+	}
+
+	FAssetRegistryModule::AssetCreated(NiagaraData);
+	Package->MarkPackageDirty();
+	StatusText = FText::Format(LOCTEXT("SavedNiagaraDataStatus", "Saved {0}."), FText::FromString(SaveObjectPath));
+
+	return FReply::Handled();
+}
+
+bool SMagicaVoxelPreviewWindow::CanSavePackedVoxelData() const
+{
+	return GetSelectedModel(SelectedVoxelData.Get(), GetSelectedModelIndex()) != nullptr;
 }
 
 void SMagicaVoxelPreviewWindow::RefreshPreviewMesh()

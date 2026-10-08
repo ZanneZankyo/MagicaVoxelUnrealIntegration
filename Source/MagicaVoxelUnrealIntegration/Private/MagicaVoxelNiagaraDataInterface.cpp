@@ -2,13 +2,13 @@
 
 #include "MagicaVoxelNiagaraDataInterface.h"
 
+#include "MagicaVoxelNiagaraData.h"
 #include "NiagaraCompileHashVisitor.h"
 #include "NiagaraDataInterfaceUtilities.h"
 #include "NiagaraShaderParametersBuilder.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraTypes.h"
 #include "GlobalRenderResources.h"
-#include "RHIUtilities.h"
 #include "VectorVM.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MagicaVoxelNiagaraDataInterface)
@@ -38,80 +38,17 @@ namespace MagicaVoxelNiagaraDataInterfaceLocal
 
 	struct FInstanceData_GameThread
 	{
-		TArray<FVector4f> PositionsAndColorIndices;
-		TArray<FVector4f> Colors;
-		FIntVector ModelSize = FIntVector::ZeroValue;
+		const UMagicaVoxelNiagaraData* NiagaraData = nullptr;
 	};
 
 	struct FInstanceData_RenderThread
 	{
-		~FInstanceData_RenderThread()
-		{
-			Release();
-		}
-
-		void Release()
-		{
-			PositionAndColorIndexBuffer.Release();
-			ColorBuffer.Release();
-			VoxelCount = 0;
-			ModelSize = FVector3f::ZeroVector;
-		}
-
-		void Update(FRHICommandListBase& RHICmdList, TConstArrayView<FVector4f> InPositionsAndColorIndices, TConstArrayView<FVector4f> InColors, const FIntVector& InModelSize)
-		{
-			Release();
-
-			TArray<FVector4f> SafePositionsAndColorIndices(InPositionsAndColorIndices);
-			TArray<FVector4f> SafeColors(InColors);
-			if (SafePositionsAndColorIndices.IsEmpty())
-			{
-				SafePositionsAndColorIndices.Add(FVector4f::Zero());
-				SafeColors.Add(FVector4f(1.0f, 1.0f, 1.0f, 1.0f));
-			}
-
-			VoxelCount = InPositionsAndColorIndices.Num();
-			ModelSize = FVector3f(
-				static_cast<float>(InModelSize.X),
-				static_cast<float>(InModelSize.Y),
-				static_cast<float>(InModelSize.Z));
-
-			PositionAndColorIndexBuffer.InitializeWithData(
-				RHICmdList,
-				TEXT("MagicaVoxelNiagaraPositionsAndColorIndices"),
-				sizeof(FVector4f),
-				SafePositionsAndColorIndices.Num(),
-				PF_A32B32G32R32F,
-				BUF_Static,
-				[&SafePositionsAndColorIndices](FRHIBufferInitializer& Initializer)
-				{
-					Initializer.WriteData(SafePositionsAndColorIndices.GetData(), SafePositionsAndColorIndices.Num() * sizeof(FVector4f));
-				});
-
-			ColorBuffer.InitializeWithData(
-				RHICmdList,
-				TEXT("MagicaVoxelNiagaraColors"),
-				sizeof(FVector4f),
-				SafeColors.Num(),
-				PF_A32B32G32R32F,
-				BUF_Static,
-				[&SafeColors](FRHIBufferInitializer& Initializer)
-				{
-					Initializer.WriteData(SafeColors.GetData(), SafeColors.Num() * sizeof(FVector4f));
-				});
-		}
-
-		int32 VoxelCount = 0;
-		FVector3f ModelSize = FVector3f::ZeroVector;
-		FReadBuffer PositionAndColorIndexBuffer;
-		FReadBuffer ColorBuffer;
+		const FMagicaVoxelNiagaraDataRenderResources* RenderResources = nullptr;
 	};
 
 	struct FGameToRenderInstanceData
 	{
-		TArray<FVector4f> PositionsAndColorIndices;
-		TArray<FVector4f> Colors;
-		FIntVector ModelSize = FIntVector::ZeroValue;
+		const FMagicaVoxelNiagaraDataRenderResources* RenderResources = nullptr;
 	};
 
 	struct FProxy : public FNiagaraDataInterfaceProxy
@@ -125,11 +62,7 @@ namespace MagicaVoxelNiagaraDataInterfaceLocal
 		{
 			FGameToRenderInstanceData* GameToRenderInstanceData = reinterpret_cast<FGameToRenderInstanceData*>(PerInstanceData);
 			FInstanceData_RenderThread& InstanceData = PerInstanceData_RenderThread.FindOrAdd(Instance);
-			InstanceData.Update(
-				FRHICommandListImmediate::Get(),
-				GameToRenderInstanceData->PositionsAndColorIndices,
-				GameToRenderInstanceData->Colors,
-				GameToRenderInstanceData->ModelSize);
+			InstanceData.RenderResources = GameToRenderInstanceData->RenderResources;
 			GameToRenderInstanceData->~FGameToRenderInstanceData();
 		}
 
@@ -162,11 +95,7 @@ bool UMagicaVoxelNiagaraDataInterface::Equals(const UNiagaraDataInterface* Other
 	}
 
 	const UMagicaVoxelNiagaraDataInterface* OtherTyped = CastChecked<const UMagicaVoxelNiagaraDataInterface>(Other);
-	return OtherTyped->VoxelData == VoxelData
-		&& OtherTyped->ModelIndex == ModelIndex
-		&& OtherTyped->VoxelSize == VoxelSize
-		&& OtherTyped->bUseCellCenters == bUseCellCenters
-		&& OtherTyped->bCenterModel == bCenterModel;
+	return OtherTyped->NiagaraData == NiagaraData;
 }
 
 bool UMagicaVoxelNiagaraDataInterface::CopyToInternal(UNiagaraDataInterface* Destination) const
@@ -177,11 +106,7 @@ bool UMagicaVoxelNiagaraDataInterface::CopyToInternal(UNiagaraDataInterface* Des
 	}
 
 	UMagicaVoxelNiagaraDataInterface* DestinationTyped = CastChecked<UMagicaVoxelNiagaraDataInterface>(Destination);
-	DestinationTyped->VoxelData = VoxelData;
-	DestinationTyped->ModelIndex = ModelIndex;
-	DestinationTyped->VoxelSize = VoxelSize;
-	DestinationTyped->bUseCellCenters = bUseCellCenters;
-	DestinationTyped->bCenterModel = bCenterModel;
+	DestinationTyped->NiagaraData = NiagaraData;
 	return true;
 }
 
@@ -195,15 +120,27 @@ bool UMagicaVoxelNiagaraDataInterface::InitPerInstanceData(void* PerInstanceData
 	using namespace MagicaVoxelNiagaraDataInterfaceLocal;
 
 	FInstanceData_GameThread* InstanceData = new(PerInstanceData) FInstanceData_GameThread();
-	BuildPackedVoxelData(InstanceData->PositionsAndColorIndices, InstanceData->Colors, InstanceData->ModelSize);
+	InstanceData->NiagaraData = NiagaraData;
 
-	if (IsUsedWithGPUScript())
+	if (IsUsedWithGPUScript() && IsValid(NiagaraData))
 	{
+		TArray<FVector4f> PositionsAndColorIndices = NiagaraData->PositionsAndColorIndices;
+		TArray<FVector4f> Colors = NiagaraData->Colors;
+		const FIntVector ModelSize = NiagaraData->ModelSize;
+
 		ENQUEUE_RENDER_COMMAND(FMagicaVoxelNiagaraDataInterface_AddProxy)
 		(
-			[Proxy_RT = GetProxyAs<FProxy>(), InstanceID_RT = SystemInstance->GetId()](FRHICommandListImmediate& RHICmdList)
+			[
+				Proxy_RT = GetProxyAs<FProxy>(),
+				InstanceID_RT = SystemInstance->GetId(),
+				NiagaraData_RT = NiagaraData.Get(),
+				PositionsAndColorIndices_RT = MoveTemp(PositionsAndColorIndices),
+				Colors_RT = MoveTemp(Colors),
+				ModelSize_RT = ModelSize
+			](FRHICommandListImmediate& RHICmdList) mutable
 			{
-				Proxy_RT->PerInstanceData_RenderThread.FindOrAdd(InstanceID_RT);
+				NiagaraData_RT->UpdateRenderResources(RHICmdList, PositionsAndColorIndices_RT, Colors_RT, ModelSize_RT);
+				Proxy_RT->PerInstanceData_RenderThread.FindOrAdd(InstanceID_RT).RenderResources = &NiagaraData_RT->GetRenderResources();
 			}
 		);
 	}
@@ -241,9 +178,7 @@ void UMagicaVoxelNiagaraDataInterface::ProvidePerInstanceDataForRenderThread(voi
 
 	const FInstanceData_GameThread* InstanceData = reinterpret_cast<const FInstanceData_GameThread*>(PerInstanceData);
 	FGameToRenderInstanceData* GameToRenderInstanceData = new(DataForRenderThread) FGameToRenderInstanceData();
-	GameToRenderInstanceData->PositionsAndColorIndices = InstanceData->PositionsAndColorIndices;
-	GameToRenderInstanceData->Colors = InstanceData->Colors;
-	GameToRenderInstanceData->ModelSize = InstanceData->ModelSize;
+	GameToRenderInstanceData->RenderResources = IsValid(InstanceData->NiagaraData) ? &InstanceData->NiagaraData->GetRenderResources() : nullptr;
 }
 
 #if WITH_EDITORONLY_DATA
@@ -290,7 +225,7 @@ void UMagicaVoxelNiagaraDataInterface::GetFunctionsInternal(TArray<FNiagaraFunct
 		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("MagicaVoxel")));
 		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("VoxelIndex")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Position")));
-		Sig.SetDescription(LOCTEXT("GetVoxelPositionDesc", "Returns the selected voxel's local position scaled by VoxelSize."));
+		Sig.SetDescription(LOCTEXT("GetVoxelPositionDesc", "Returns the selected voxel's packed local position."));
 	}
 
 	{
@@ -385,15 +320,16 @@ void UMagicaVoxelNiagaraDataInterface::SetShaderParameters(const FNiagaraDataInt
 
 	const FProxy& DIProxy = Context.GetProxy<FProxy>();
 	const FInstanceData_RenderThread* InstanceData = DIProxy.PerInstanceData_RenderThread.Find(Context.GetSystemInstanceID());
+	const FMagicaVoxelNiagaraDataRenderResources* RenderResources = InstanceData ? InstanceData->RenderResources : nullptr;
 
 	FShaderParameters* ShaderParameters = Context.GetParameterNestedStruct<FShaderParameters>();
-	ShaderParameters->VoxelCount = InstanceData ? InstanceData->VoxelCount : 0;
-	ShaderParameters->ModelSize = InstanceData ? InstanceData->ModelSize : FVector3f::ZeroVector;
-	ShaderParameters->PositionAndColorIndexBuffer = InstanceData && InstanceData->PositionAndColorIndexBuffer.SRV
-		? InstanceData->PositionAndColorIndexBuffer.SRV
+	ShaderParameters->VoxelCount = RenderResources ? RenderResources->VoxelCount : 0;
+	ShaderParameters->ModelSize = RenderResources ? RenderResources->ModelSize : FVector3f::ZeroVector;
+	ShaderParameters->PositionAndColorIndexBuffer = RenderResources && RenderResources->PositionAndColorIndexBuffer.SRV
+		? RenderResources->PositionAndColorIndexBuffer.SRV
 		: GBlackFloat4VertexBufferWithSRV->ShaderResourceViewRHI;
-	ShaderParameters->ColorBuffer = InstanceData && InstanceData->ColorBuffer.SRV
-		? InstanceData->ColorBuffer.SRV
+	ShaderParameters->ColorBuffer = RenderResources && RenderResources->ColorBuffer.SRV
+		? RenderResources->ColorBuffer.SRV
 		: GBlackFloat4VertexBufferWithSRV->ShaderResourceViewRHI;
 }
 
@@ -446,7 +382,8 @@ void UMagicaVoxelNiagaraDataInterface::VMGetVoxelCount(FVectorVMExternalFunction
 	VectorVM::FUserPtrHandler<FInstanceData_GameThread> InstanceData(Context);
 	FNDIOutputParam<int32> OutVoxelCount(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->PositionsAndColorIndices.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
@@ -461,11 +398,12 @@ void UMagicaVoxelNiagaraDataInterface::VMGetModelSize(FVectorVMExternalFunctionC
 	VectorVM::FUserPtrHandler<FInstanceData_GameThread> InstanceData(Context);
 	FNDIOutputParam<FVector3f> OutModelSize(Context);
 
-	const FVector3f ModelSize = InstanceData.Get()
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const FVector3f ModelSize = IsValid(Data)
 		? FVector3f(
-			static_cast<float>(InstanceData->ModelSize.X),
-			static_cast<float>(InstanceData->ModelSize.Y),
-			static_cast<float>(InstanceData->ModelSize.Z))
+			static_cast<float>(Data->ModelSize.X),
+			static_cast<float>(Data->ModelSize.Y),
+			static_cast<float>(Data->ModelSize.Z))
 		: FVector3f::ZeroVector;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
@@ -482,7 +420,8 @@ void UMagicaVoxelNiagaraDataInterface::VMIsValidVoxelIndex(FVectorVMExternalFunc
 	FNDIInputParam<int32> InVoxelIndex(Context);
 	FNDIOutputParam<bool> OutIsValid(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->PositionsAndColorIndices.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
@@ -499,13 +438,14 @@ void UMagicaVoxelNiagaraDataInterface::VMGetVoxelPosition(FVectorVMExternalFunct
 	FNDIInputParam<int32> InVoxelIndex(Context);
 	FNDIOutputParam<FVector3f> OutPosition(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->PositionsAndColorIndices.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
 		const int32 VoxelIndex = InVoxelIndex.GetAndAdvance();
 		const bool bIsValid = VoxelIndex >= 0 && VoxelIndex < VoxelCount;
-		const FVector4f PackedPosition = bIsValid ? InstanceData->PositionsAndColorIndices[VoxelIndex] : FVector4f::Zero();
+		const FVector4f PackedPosition = bIsValid ? Data->PositionsAndColorIndices[VoxelIndex] : FVector4f::Zero();
 		const FVector3f Position(PackedPosition.X, PackedPosition.Y, PackedPosition.Z);
 
 		OutPosition.SetAndAdvance(Position);
@@ -520,13 +460,15 @@ void UMagicaVoxelNiagaraDataInterface::VMGetVoxelColor(FVectorVMExternalFunction
 	FNDIInputParam<int32> InVoxelIndex(Context);
 	FNDIOutputParam<FLinearColor> OutColor(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->Colors.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
 		const int32 VoxelIndex = InVoxelIndex.GetAndAdvance();
 		const bool bIsValid = VoxelIndex >= 0 && VoxelIndex < VoxelCount;
-		const FVector4f PackedColor = bIsValid ? InstanceData->Colors[VoxelIndex] : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
+		const int32 ColorIndex = bIsValid ? FMath::RoundToInt(Data->PositionsAndColorIndices[VoxelIndex].W) : INDEX_NONE;
+		const FVector4f PackedColor = Data && Data->Colors.IsValidIndex(ColorIndex) ? Data->Colors[ColorIndex] : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
 		const FLinearColor Color(PackedColor.X, PackedColor.Y, PackedColor.Z, PackedColor.W);
 
 		OutColor.SetAndAdvance(Color);
@@ -541,13 +483,14 @@ void UMagicaVoxelNiagaraDataInterface::VMGetVoxelColorIndex(FVectorVMExternalFun
 	FNDIInputParam<int32> InVoxelIndex(Context);
 	FNDIOutputParam<int32> OutColorIndex(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->PositionsAndColorIndices.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
 		const int32 VoxelIndex = InVoxelIndex.GetAndAdvance();
 		const bool bIsValid = VoxelIndex >= 0 && VoxelIndex < VoxelCount;
-		OutColorIndex.SetAndAdvance(bIsValid ? FMath::RoundToInt(InstanceData->PositionsAndColorIndices[VoxelIndex].W) : 0);
+		OutColorIndex.SetAndAdvance(bIsValid ? FMath::RoundToInt(Data->PositionsAndColorIndices[VoxelIndex].W) : 0);
 	}
 }
 
@@ -562,118 +505,22 @@ void UMagicaVoxelNiagaraDataInterface::VMGetVoxel(FVectorVMExternalFunctionConte
 	FNDIOutputParam<FLinearColor> OutColor(Context);
 	FNDIOutputParam<int32> OutColorIndex(Context);
 
-	const int32 VoxelCount = InstanceData.Get() ? InstanceData->PositionsAndColorIndices.Num() : 0;
+	const UMagicaVoxelNiagaraData* Data = InstanceData.Get() ? InstanceData->NiagaraData : nullptr;
+	const int32 VoxelCount = IsValid(Data) ? Data->PositionsAndColorIndices.Num() : 0;
 
 	for (int32 InstanceIndex = 0; InstanceIndex < Context.GetNumInstances(); ++InstanceIndex)
 	{
 		const int32 VoxelIndex = InVoxelIndex.GetAndAdvance();
 		const bool bIsValid = VoxelIndex >= 0 && VoxelIndex < VoxelCount;
-		const FVector4f PackedPosition = bIsValid ? InstanceData->PositionsAndColorIndices[VoxelIndex] : FVector4f::Zero();
-		const FVector4f PackedColor = bIsValid ? InstanceData->Colors[VoxelIndex] : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
+		const FVector4f PackedPosition = bIsValid ? Data->PositionsAndColorIndices[VoxelIndex] : FVector4f::Zero();
+		const int32 ColorIndex = bIsValid ? FMath::RoundToInt(PackedPosition.W) : INDEX_NONE;
+		const FVector4f PackedColor = Data && Data->Colors.IsValidIndex(ColorIndex) ? Data->Colors[ColorIndex] : FVector4f(1.0f, 1.0f, 1.0f, 1.0f);
 
 		OutIsValid.SetAndAdvance(bIsValid);
 		OutPosition.SetAndAdvance(FVector3f(PackedPosition.X, PackedPosition.Y, PackedPosition.Z));
 		OutColor.SetAndAdvance(FLinearColor(PackedColor.X, PackedColor.Y, PackedColor.Z, PackedColor.W));
-		OutColorIndex.SetAndAdvance(bIsValid ? FMath::RoundToInt(PackedPosition.W) : 0);
+		OutColorIndex.SetAndAdvance(bIsValid ? ColorIndex : 0);
 	}
-}
-
-void UMagicaVoxelNiagaraDataInterface::BuildPackedVoxelData(TArray<FVector4f>& OutPositionsAndColorIndices, TArray<FVector4f>& OutColors, FIntVector& OutModelSize) const
-{
-	OutPositionsAndColorIndices.Reset();
-	OutColors.Reset();
-	OutModelSize = FIntVector::ZeroValue;
-
-	const FMagicaVoxelModel* Model = GetModel();
-	if (!Model)
-	{
-		return;
-	}
-
-	OutModelSize = Model->Size;
-	OutPositionsAndColorIndices.Reserve(Model->Voxels.Num());
-	OutColors.Reserve(Model->Voxels.Num());
-
-	for (const FMagicaVoxelVoxel& Voxel : Model->Voxels)
-	{
-		if (Voxel.X >= Model->Size.X || Voxel.Y >= Model->Size.Y || Voxel.Z >= Model->Size.Z)
-		{
-			continue;
-		}
-
-		const FVector3f Position = MakeVoxelPosition(Voxel, *Model);
-		const FLinearColor Color = GetVoxelColor(Voxel);
-		OutPositionsAndColorIndices.Add(FVector4f(Position.X, Position.Y, Position.Z, static_cast<float>(Voxel.ColorIndex)));
-		OutColors.Add(FVector4f(Color.R, Color.G, Color.B, Color.A));
-	}
-}
-
-const FMagicaVoxelModel* UMagicaVoxelNiagaraDataInterface::GetModel() const
-{
-	if (!IsValid(VoxelData) || !VoxelData->Models.IsValidIndex(ModelIndex))
-	{
-		return nullptr;
-	}
-
-	const FMagicaVoxelModel& Model = VoxelData->Models[ModelIndex];
-	return Model.Size.X > 0 && Model.Size.Y > 0 && Model.Size.Z > 0 ? &Model : nullptr;
-}
-
-bool UMagicaVoxelNiagaraDataInterface::GetVoxel(int32 VoxelIndex, const FMagicaVoxelVoxel*& OutVoxel, const FMagicaVoxelModel*& OutModel) const
-{
-	OutVoxel = nullptr;
-	OutModel = GetModel();
-
-	if (!OutModel || !OutModel->Voxels.IsValidIndex(VoxelIndex))
-	{
-		return false;
-	}
-
-	const FMagicaVoxelVoxel& Voxel = OutModel->Voxels[VoxelIndex];
-	if (Voxel.X >= OutModel->Size.X || Voxel.Y >= OutModel->Size.Y || Voxel.Z >= OutModel->Size.Z)
-	{
-		return false;
-	}
-
-	OutVoxel = &Voxel;
-	return true;
-}
-
-FVector3f UMagicaVoxelNiagaraDataInterface::MakeVoxelPosition(const FMagicaVoxelVoxel& Voxel, const FMagicaVoxelModel& Model) const
-{
-	FVector Position(
-		static_cast<double>(Voxel.X),
-		static_cast<double>(Voxel.Y),
-		static_cast<double>(Voxel.Z));
-
-	if (bUseCellCenters)
-	{
-		Position += FVector(0.5);
-	}
-
-	if (bCenterModel)
-	{
-		const FVector ModelSize(
-			static_cast<double>(Model.Size.X),
-			static_cast<double>(Model.Size.Y),
-			static_cast<double>(Model.Size.Z));
-		Position -= ModelSize * 0.5;
-	}
-
-	return FVector3f(Position * static_cast<double>(VoxelSize));
-}
-
-FLinearColor UMagicaVoxelNiagaraDataInterface::GetVoxelColor(const FMagicaVoxelVoxel& Voxel) const
-{
-	const int32 PaletteIndex = static_cast<int32>(Voxel.ColorIndex);
-	if (IsValid(VoxelData) && VoxelData->Palette.IsValidIndex(PaletteIndex))
-	{
-		FLinearColor Color = FLinearColor::FromSRGBColor(VoxelData->Palette[PaletteIndex]);
-		Color.A = 1.0f;
-		return Color;
-	}
-
-	return FLinearColor::White;
 }
 
 #undef LOCTEXT_NAMESPACE

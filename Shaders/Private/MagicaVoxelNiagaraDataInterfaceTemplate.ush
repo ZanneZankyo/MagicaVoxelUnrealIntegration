@@ -31,16 +31,17 @@ void GetVoxelPosition_{ParameterName}(int VoxelIndex, out float3 Position)
 	Position = {ParameterName}_PositionAndColorIndexBuffer[ClampedIndex].xyz;
 }
 
-void GetVoxelColor_{ParameterName}(int VoxelIndex, out float4 Color)
-{
-	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
-	Color = {ParameterName}_ColorBuffer[ClampedIndex];
-}
-
 void GetVoxelColorIndex_{ParameterName}(int VoxelIndex, out int ColorIndex)
 {
 	const int ClampedIndex = GetClampedVoxelIndex_{ParameterName}(VoxelIndex);
 	ColorIndex = (int)round({ParameterName}_PositionAndColorIndexBuffer[ClampedIndex].w);
+}
+
+void GetVoxelColor_{ParameterName}(int VoxelIndex, out float4 Color)
+{
+	int VoxelColorIndex = 0;
+	GetVoxelColorIndex_{ParameterName}(VoxelIndex, VoxelColorIndex);
+	Color = {ParameterName}_ColorBuffer[VoxelColorIndex];
 }
 
 void GetVoxel_{ParameterName}(int VoxelIndex, out bool bIsValid, out float3 Position, out float4 Color, out int ColorIndex)

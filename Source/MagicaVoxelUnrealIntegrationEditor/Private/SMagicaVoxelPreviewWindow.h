@@ -60,6 +60,8 @@ private:
 
 	FReply SavePreviewMesh();
 	bool CanSavePreviewMesh() const;
+	FReply SavePackedVoxelData();
+	bool CanSavePackedVoxelData() const;
 
 	void RefreshPreviewMesh();
 	void ApplyPreviewMaterials();
